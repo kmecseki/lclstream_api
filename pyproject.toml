@@ -24,11 +24,11 @@ dependencies = [
     "svcs>=25.1.0",
     "pyjwt>=2.15.1",
     "sqlalchemy>=2.0.51",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "mpi4py>=4.1.2",
     "pyzmq>=26.0.0",
     "mypy>=2.1.0",
