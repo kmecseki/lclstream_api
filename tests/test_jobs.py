@@ -1,4 +1,5 @@
 import psik
+from lclstreamer.models.parameters import Parameters
 
 from lclstream_api.jobs import (
     create_forwarder,
@@ -7,7 +8,6 @@ from lclstream_api.jobs import (
     get_outdir,
     replay_job,
 )
-from lclstream_api.lclstreamer_param import Parameters
 from lclstream_api.models import PortEntry
 
 
