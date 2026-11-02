@@ -3,11 +3,11 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from lclstreamer.models.parameters import Parameters
 from psik import Job, JobManager
 
 from .config import Config
 from .jobs import create_forwarder, create_producer
-from .lclstreamer_param import Parameters
 from .models import (
     CacheMetrics,
     ClientName,

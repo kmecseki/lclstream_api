@@ -8,9 +8,9 @@ from fastapi import (
     Depends,
     HTTPException,
 )
+from lclstreamer.models.parameters import Parameters
 
 from ..config import Config, load_config, to_mgr
-from ..lclstreamer_param import Parameters
 from ..models import (
     ClientName,
     TransferInfo,

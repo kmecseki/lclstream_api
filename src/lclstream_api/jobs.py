@@ -4,13 +4,13 @@ from pathlib import Path
 from secrets import token_urlsafe
 
 import psik
-from pydantic import SecretStr
-
-from .config import Config
-from .lclstreamer_param import (
+from lclstreamer.models.parameters import (
     BinaryDataStreamingDataHandlerParameters,
     Parameters,
 )
+from pydantic import SecretStr
+
+from .config import Config
 from .models import PortEntry
 
 
