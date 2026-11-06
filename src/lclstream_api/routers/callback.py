@@ -2,6 +2,7 @@ import logging
 from typing import Annotated
 
 import psik
+from aiohttp.web import HTTPForbidden
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -45,9 +46,13 @@ async def handle_callback(
         except AttributeError:  # aiohttp uses read()
             body = (await request.read()).decode("utf-8")  # type: ignore[attr-defined]
             # body = cb.model_dump_json()
-        psik.web.verify_signature(
-            body, job.spec.cb_secret.get_secret_value(), x_hub_signature_256
-        )
+        # psik raises aiohttp's 403, which FastAPI would turn into a 500.
+        try:
+            psik.web.verify_signature(
+                body, job.spec.cb_secret.get_secret_value(), x_hub_signature_256
+            )
+        except HTTPForbidden as e:
+            raise HTTPException(status_code=403, detail=e.reason) from e
 
     bg_tasks.add_task(
         xfer.transition,

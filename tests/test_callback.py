@@ -86,3 +86,17 @@ async def test_signed_transition(client):
     )
     assert response.status_code == 200
     assert xfer.states[ClientName.producer] == JobState.queued
+
+
+@pytest.mark.asyncio
+async def test_bad_signature(client):
+    xfer, job = await add_transfer(client, ClientName.producer, cb_secret=SECRET)
+    body = queued(job)
+
+    response = client.post(
+        "/callback/producer",
+        content=body,
+        headers={**JSON, "x-hub-signature-256": sign_message(body, "wrong")},
+    )
+    assert response.status_code == 403
+    assert xfer.states[ClientName.producer] == JobState.new
