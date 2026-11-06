@@ -3,22 +3,13 @@ import json
 
 import pytest
 import pytest_asyncio
-from fastapi.testclient import TestClient
 from lclstream.zmqsock import puller
 from test_jobs import param2
 
 from lclstream_api.models import TransferInfo, TransferStatus
-from lclstream_api.server import app
 
 
 ADDR = "tcp://127.0.0.1:28451"
-
-
-@pytest.fixture
-def client(setup_lclstream_api):
-    # Entering the client runs the lifespan, which builds the registry.
-    with TestClient(app, base_url="http://testserver/v1") as c:
-        yield c
 
 
 @pytest_asyncio.fixture

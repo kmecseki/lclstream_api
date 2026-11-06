@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 
 from lclstream_api.config import Config
+from lclstream_api.server import app
 
 _zmqbuf = os.environ.get("ZMQBUF_PATH") or shutil.which("zmqbuf") or "zmqbuf"
 
@@ -61,3 +63,10 @@ def setup_lclstream_api(config, tmp_path) -> Path:
     fname.write_text(config.model_dump_json())
     os.environ["LCLSTREAM_API_CONFIG"] = str(fname)
     return fname
+
+
+@pytest.fixture
+def client(setup_lclstream_api):
+    # Entering the client runs the lifespan, which builds the registry.
+    with TestClient(app, base_url="http://testserver/v1") as c:
+        yield c
