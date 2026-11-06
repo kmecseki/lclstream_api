@@ -684,6 +684,7 @@ dependencies = [
     { name = "psik" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "svcs" },
     { name = "uvicorn" },
 ]
 
@@ -711,6 +712,7 @@ requires-dist = [
     { name = "psik", specifier = ">=3.1.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "svcs", specifier = ">=25.1.0" },
     { name = "uvicorn", specifier = ">=0.48.0" },
 ]
 
@@ -1565,6 +1567,19 @@ version = "1.0.0"
 source = { git = "https://github.com/frobnitzem/stream.py#437482e4849772dc1e2d80694502df8cd7ebe931" }
 dependencies = [
     { name = "importlib-metadata" },
+]
+
+[[package]]
+name = "svcs"
+version = "26.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/5e/89463bf7613fe723801b8f7000f37c4c36486adcda0d115ca417e513c7cc/svcs-26.2.0.tar.gz", hash = "sha256:129efb89586c2c52295ee00b00562af7d85d5535dad149534993e25fccbd76a6", size = 915193, upload-time = "2026-08-24T12:54:16.474Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/75/57ff9e594ee14d0948d3a77546894c5eb89616eeb7d8989962d6bcd1557b/svcs-26.2.0-py3-none-any.whl", hash = "sha256:a1f074f345195b961fbf29af07f6ce181f7598813793773db20cf43870949c81", size = 22319, upload-time = "2026-08-24T12:54:14.953Z" },
 ]
 
 [[package]]

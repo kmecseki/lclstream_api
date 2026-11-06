@@ -10,16 +10,11 @@ the format:
 """
 
 import logging
-from typing import Annotated
 
-from fastapi import Depends
-
-from .config import Config, ForwarderConfig, load_config
+from .config import ForwarderConfig
 from .models import PortEntry
 
 _logger = logging.getLogger(__name__)
-
-CachedConfig = Annotated[Config, Depends(load_config)]
 
 
 class PortDatabase:  # singleton
@@ -88,16 +83,3 @@ class PortDatabase:  # singleton
         self.free(entry.port)
         return entry
 
-
-DB: PortDatabase = None  # type: ignore[assignment]
-
-
-def get_portusage(config: CachedConfig) -> PortDatabase:
-    # initialize on first access (allows db to be configurable)
-    global DB
-    if DB is None:
-        DB = PortDatabase(config.forwarder)
-    return DB
-
-
-PortUsage = Annotated[PortDatabase, Depends(get_portusage)]

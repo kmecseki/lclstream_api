@@ -3,11 +3,15 @@ from contextlib import asynccontextmanager
 from importlib.metadata import version
 from typing import Any
 
+import psik
+import svcs
 from fastapi import FastAPI
 
-from .config import load_config
+from .config import Config, load_config, to_mgr
+from .ports import PortDatabase
 from .routers.callback import callback
 from .routers.transfer import transfers
+from .xfer_db import XferDatabase
 
 _logger = logging.getLogger(__name__)
 version_tag = version(__package__)
@@ -53,10 +57,17 @@ api.include_router(
 )
 
 
+@svcs.fastapi.lifespan
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(app: FastAPI, registry: svcs.Registry):
     _logger.info("Loading config.")
-    load_config()
+    cfg = load_config()
+
+    # Shared state lives for the app; the job manager is per request.
+    registry.register_value(Config, cfg)
+    registry.register_value(PortDatabase, PortDatabase(cfg.forwarder))
+    registry.register_value(XferDatabase, XferDatabase())
+    registry.register_factory(psik.JobManager, lambda: to_mgr(cfg))
     # Setup activities
     # setup_security(config.authz)
     yield

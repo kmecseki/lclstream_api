@@ -1,5 +1,4 @@
 import os
-from functools import cache
 from pathlib import Path
 from typing import Union
 
@@ -49,7 +48,6 @@ class Config(BaseModel):
 Pstr = Union[str, os.PathLike]
 
 
-@cache
 def load_config(config_name: Pstr | None = None) -> Config:
     """Load lclstream_api's configuration file.
 

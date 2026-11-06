@@ -9,9 +9,10 @@ from fastapi import (
     HTTPException,
     Request,
 )
+from svcs.fastapi import DepContainer
 
 from ..models import ClientName
-from ..xfer_db import Database
+from ..xfer_db import XferDatabase
 
 _logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ callback = APIRouter(responses={401: {"description": "Unauthorized"}})
 async def handle_callback(
     client: ClientName,
     cb: psik.Callback,
-    db: Database,
+    db: XferDatabase,
     request: Request,
     bg_tasks: BackgroundTasks,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
@@ -61,11 +62,12 @@ async def handle_callback(
 @callback.post("/producer")
 async def producer_callback(
     cb: psik.Callback,
-    db: Database,
+    services: DepContainer,
     request: Request,
     bg_tasks: BackgroundTasks,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ) -> bool:
+    db = await services.aget(XferDatabase)
     return await handle_callback(
         ClientName.producer, cb, db, request, bg_tasks, x_hub_signature_256
     )
@@ -74,11 +76,12 @@ async def producer_callback(
 @callback.post("/forwarder")
 async def forwarder_callback(
     cb: psik.Callback,
-    db: Database,
+    services: DepContainer,
     request: Request,
     bg_tasks: BackgroundTasks,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ) -> bool:
+    db = await services.aget(XferDatabase)
     return await handle_callback(
         ClientName.cache, cb, db, request, bg_tasks, x_hub_signature_256
     )

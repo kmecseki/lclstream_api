@@ -1,11 +1,11 @@
 import pytest
 
-from lclstream_api.ports import get_portusage
+from lclstream_api.ports import PortDatabase
 
 
 
 def test_db(config):
-    DB = get_portusage(config)
+    DB = PortDatabase(config.forwarder)
 
     with pytest.raises(KeyError):
         DB.delete(123)
