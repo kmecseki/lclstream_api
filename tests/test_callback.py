@@ -3,6 +3,7 @@ import json
 import psik
 import pytest
 import pytest_asyncio
+import svcs
 from aiohttp import web
 from fastapi import HTTPException
 from psik.models import Callback, JobState
@@ -13,7 +14,7 @@ from lclstream_api.routers.callback import (
     forwarder_callback,
     producer_callback,
 )
-from lclstream_api.xfer_db import get_database
+from lclstream_api.xfer_db import XferDatabase
 
 ### test fixture for accepting a callback ###
 cb_value = web.AppKey("value", None)  # type: ignore[var-annotated]
@@ -37,19 +38,21 @@ async def post_cb(name: ClientName, request, config):
     cb = psik.Callback.model_validate_json(body)
     request.app[cb_value] = cb
     x_hub_signature_256 = request.headers.get("x_hub_signature_256", None)
-    db = get_database()
+    registry = svcs.Registry()
+    registry.register_value(XferDatabase, XferDatabase())
 
     bg_tasks = MockBackgroundTasks()
 
     try:
-        if name == ClientName.producer:
-            ans = await producer_callback(
-                cb, db, request, bg_tasks, x_hub_signature_256
-            )  # type: ignore[arg-type]
-        else:
-            ans = await forwarder_callback(
-                cb, db, request, bg_tasks, x_hub_signature_256
-            )  # type: ignore[arg-type]
+        async with svcs.Container(registry) as services:
+            if name == ClientName.producer:
+                ans = await producer_callback(
+                    cb, services, request, bg_tasks, x_hub_signature_256
+                )  # type: ignore[arg-type]
+            else:
+                ans = await forwarder_callback(
+                    cb, services, request, bg_tasks, x_hub_signature_256
+                )  # type: ignore[arg-type]
     except HTTPException:
         return web.Response(text='"false"', status=200)
     assert len(bg_tasks) == 1

@@ -7,9 +7,7 @@ the format:
 """
 
 import logging
-from typing import Annotated
 
-from fastapi import Depends
 from psik import Job
 from psik.models import JobID
 
@@ -64,16 +62,3 @@ class XferDatabase:  # singleton
         await xfer.cancel_job()
         return xfer
 
-
-DB: XferDatabase = None  # type: ignore[assignment]
-
-
-def get_database() -> XferDatabase:
-    # initialize on first access (allows db to be configurable)
-    global DB
-    if DB is None:
-        DB = XferDatabase()
-    return DB
-
-
-Database = Annotated[XferDatabase, Depends(get_database)]

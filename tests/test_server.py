@@ -8,12 +8,17 @@ from lclstream.zmqsock import puller
 from test_jobs import param2
 
 from lclstream_api.models import TransferInfo, TransferStatus
-from lclstream_api.server import api
+from lclstream_api.server import app
 
 
 ADDR = "tcp://127.0.0.1:28451"
 
-client = TestClient(api)
+
+@pytest.fixture
+def client(setup_lclstream_api):
+    # Entering the client runs the lifespan, which builds the registry.
+    with TestClient(app, base_url="http://testserver/v1") as c:
+        yield c
 
 
 @pytest_asyncio.fixture
@@ -41,7 +46,7 @@ async def pull_server():
             pass
 
 
-def test_get_list(setup_lclstream_api):
+def test_get_list(client):
     for path in ["/transfers", "/transfers/"]:
         response = client.get(path)
         assert response.status_code == 200
@@ -50,7 +55,7 @@ def test_get_list(setup_lclstream_api):
 
 
 @pytest.mark.asyncio
-async def test_mk_transfer(pull_server, setup_lclstream_api):
+async def test_mk_transfer(pull_server, client):
     response = client.post("/transfers", json={"abc": 2})
     assert response.status_code == 422
 
@@ -77,7 +82,7 @@ async def test_mk_transfer(pull_server, setup_lclstream_api):
     assert ok is None
 
 
-def test_read_transfer(setup_lclstream_api):
+def test_read_transfer(client):
     response = client.get("/transfers/12")
     print(response.text)
     assert response.status_code == 404

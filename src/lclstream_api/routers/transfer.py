@@ -1,35 +1,25 @@
 import logging
-from typing import Annotated
 
 import psik
 from fastapi import (
     APIRouter,
     BackgroundTasks,
-    Depends,
     HTTPException,
 )
 from lclstreamer.models.parameters import Parameters
+from svcs.fastapi import DepContainer
 
-from ..config import Config, load_config, to_mgr
+from ..config import Config
 from ..models import (
     ClientName,
     TransferInfo,
     TransferStatus,
 )
-from ..ports import PortUsage
+from ..ports import PortDatabase
 from ..transfer_mgr import create_transfer
-from ..xfer_db import Database
+from ..xfer_db import XferDatabase
 
 _logger = logging.getLogger(__name__)
-
-CachedConfig = Annotated[Config, Depends(load_config)]
-
-
-def default_mgr(cfg: CachedConfig) -> psik.JobManager:
-    return to_mgr(cfg)
-
-
-Manager = Annotated[psik.JobManager, Depends(default_mgr)]
 
 
 transfers = APIRouter(responses={401: {"description": "Unauthorized"}})
@@ -38,8 +28,7 @@ transfers = APIRouter(responses={401: {"description": "Unauthorized"}})
 @transfers.get("/", include_in_schema=False)
 @transfers.get("")
 async def list_transfers(
-    db: Database,
-    ports: PortUsage,
+    services: DepContainer,
     index: int = 0,
     limit: int | None = None,
     state: psik.JobState | None = None,
@@ -52,6 +41,8 @@ async def list_transfers(
       - limit: (optional) how many TransferStatus-s to retrieve
       - state: (optional) filter by job state
     """
+
+    db, ports = await services.aget(XferDatabase, PortDatabase)
 
     out = []
     for eid, entry in ports.items():
@@ -91,11 +82,8 @@ async def list_transfers(
 @transfers.post("")
 async def new_transfer(
     request: Parameters,
-    db: Database,
-    ports: PortUsage,
+    services: DepContainer,
     bg_tasks: BackgroundTasks,
-    cfg: CachedConfig,
-    mgr: Manager,
     user: str = "none",
 ) -> TransferStatus:
     """
@@ -110,6 +98,10 @@ async def new_transfer(
     # 0. TODO: any additional validation of request/user goes here.
     # e.g. user can access requested dataset and has permissions to
     # start lclstreamer on psana
+
+    db, ports, cfg, mgr = await services.aget(
+        XferDatabase, PortDatabase, Config, psik.JobManager
+    )
 
     try:
         entry = ports.create(user)
@@ -176,12 +168,13 @@ async def new_transfer(
 
 
 @transfers.get("/{id}")
-async def get_transfer(id: int, ports: PortUsage, db: Database) -> TransferInfo:
+async def get_transfer(id: int, services: DepContainer) -> TransferInfo:
     """Read job
     - id: The transfer ID
 
     Returns information associated with this transfer.
     """
+    db, ports = await services.aget(XferDatabase, PortDatabase)
     try:
         xfer = db[id]
         entry = ports[id]
@@ -191,7 +184,10 @@ async def get_transfer(id: int, ports: PortUsage, db: Database) -> TransferInfo:
 
 
 @transfers.delete("/{id}")
-async def cancel_transfer(id: int, bg_tasks: BackgroundTasks, db: Database) -> None:
+async def cancel_transfer(
+    id: int, bg_tasks: BackgroundTasks, services: DepContainer
+) -> None:
+    db = await services.aget(XferDatabase)
     # Cancel job
     try:
         xfer = db[id]
