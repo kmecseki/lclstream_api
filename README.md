@@ -42,6 +42,9 @@ psik:
 
 callback_url: "https://134.79.23.43:4433/v1/callback"
 
+auth:
+  type: trusted_headers  # see `auth` below
+
 forwarder:
   ip: "134.79.23.43"
   start_port: 30001
@@ -115,6 +118,42 @@ Most of the important configuration parameters are [psik.JobSpec](https://github
     Forwarding services always allocate two ports at once
     (receive,send -- in that order).  Thus, each transfer is bound to
     a `PortPair` object at creation time.
+
+- `auth`: Who sent each request. `type` picks the backend
+  (see `src/lclstream_api/auth/`); its other keys are that backend's settings.
+
+  * `anonymous`: every request is one fixed user (`username`,
+    default `"none"`). For development only.
+
+  * `trusted_headers`: read `X-Auth-Request-User` set by an auth proxy,
+    e.g. oauth2-proxy.
+    Only safe if every request goes through that proxy.
+
+  * `forwarded_jwt`: read the user from a claim (`claims`, default
+    `email` then `preferred_username`) of a Bearer JWT the proxy has
+    already validated. The signature is not checked, so the same
+    proxy caveat applies.
+
+  * `mtls`: the TLS client certificate, via certified
+    (requires a server that asks for client certs, e.g. `certified serve`).
+
+  * `chain`: try `backends` in order; the first that finds a user wins.
+
+  ```
+  auth:
+    type: trusted_headers
+  ```
+
+  oauth2-proxy on the same host, with mTLS for direct callers:
+
+  ```
+  auth:
+    type: chain
+    backends:
+      - {type: trusted_headers}
+      - {type: forwarded_jwt}
+      - {type: mtls}
+  ```
 
 - `replay`: if setup, can be used to implement a call to `lclstream push`
   which will forward all the h5 files in a given prefix.

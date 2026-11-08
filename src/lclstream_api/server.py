@@ -7,6 +7,7 @@ import psik
 import svcs
 from fastapi import FastAPI
 
+from .auth import AuthBackend
 from .config import Config, load_config, to_mgr
 from .ports import PortDatabase
 from .routers.callback import callback
@@ -68,6 +69,7 @@ async def lifespan(app: FastAPI, registry: svcs.Registry):
     registry.register_value(PortDatabase, PortDatabase(cfg.forwarder))
     registry.register_value(XferDatabase, XferDatabase())
     registry.register_factory(psik.JobManager, lambda: to_mgr(cfg))
+    registry.register_value(AuthBackend, cfg.auth)
     # Setup activities
     # setup_security(config.authz)
     yield

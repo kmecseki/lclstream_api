@@ -16,6 +16,9 @@ psik:
 
 callback_url: "https://localhost:8000/v1/callback"
 
+auth:
+  type: mtls
+
 forwarder:
   ip: "127.0.0.1"
   start_port: 42001

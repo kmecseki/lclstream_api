@@ -1,269 +1,211 @@
-"""Comprehensive tests for authentication modes (mTLS, Proxy, Hybrid)."""
+"""Tests for the pluggable authentication backends."""
 
-import os
-import tempfile
+import asyncio
 import time
-import typing
-import yaml
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import AsyncGenerator, Generator
+from typing import Any
 from unittest.mock import AsyncMock
 
-import httpx
+import jwt
 import psik
 import pytest
 import svcs
-from fastapi import FastAPI, Depends, Header, HTTPException, status
 from fastapi.testclient import TestClient
-from starlette.testclient import TestClient as StarletteTestClient
+from pydantic import ValidationError
+from starlette.requests import Request
 
-from lclstream_api.auth_proxy import CurrentUser, CallbackUser
-from lclstream_api.config import Config, load_config
+from lclstream_api.auth import (
+    MTLS,
+    Anonymous,
+    AuthBackend,
+    AuthChain,
+    ForwardedJWT,
+    TrustedHeaders,
+)
+from lclstream_api.config import Config
 from lclstream_api.models import CacheMetrics, ClientName, PortEntry, PortTransition
 from lclstream_api.ports import PortDatabase
-from lclstream_api.server import api, app as main_app
+from lclstream_api.server import app as main_app
 from lclstream_api.xfer_db import XferDatabase
 
-# The inner dependency callable that CurrentUser wraps — used as override key.
-_CurrentUserDep = typing.get_args(CurrentUser)[1].dependency
+# An `auth:` block as written in YAML, e.g. {"type": "mtls"}.
+AuthBlock = dict[str, Any]
 
-# Create a test app with endpoints we need
-test_app = FastAPI()
+# Returns the test client, now authenticated as the given user.
+AsUser = Callable[[str], TestClient]
 
-# Health check endpoint - should be publicly accessible
-@test_app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
 
-# Transfer endpoint (uses CurrentUser - trusts proxy)
-@test_app.post("/transfers")
-async def transfers(user: str = CurrentUser):
-    return {"user": user, "endpoint": "transfers"}
+def connection(headers: dict[str, str] | None = None) -> Request:
+    """A bare request carrying headers."""
+    raw = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    return Request({"type": "http", "headers": raw, "client": ("10.0.0.5", 1234)})
 
-# Callback endpoint (uses CallbackUser - mTLS only)
-@test_app.post("/callback")
-async def callback(user: str = CallbackUser):
-    return {"user": user, "endpoint": "callback"}
 
-# Add the test routes to the main app for testing
-main_app.include_router(test_app.router)
+def user_of(backend: AuthBackend, headers: dict[str, str] | None = None) -> str | None:
+    """The user backend finds on a request carrying headers, or None."""
+    principal = asyncio.run(backend.authenticate(connection(headers)))
+    if principal is None:
+        return None
+    return principal.identity
 
-@pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    """Create a temporary directory for test artifacts."""
-    with tempfile.TemporaryDirectory() as td:
-        yield Path(td)
 
-@pytest.fixture
-def cert_dir(temp_dir: Path) -> Generator[Path, None, None]:
-    """Create a certified directory structure."""
-    cert_dir = temp_dir / "certified"
-    cert_dir.mkdir(parents=True)
-    
-    # Create minimal certified config
-    config_dir = cert_dir / "config"
-    config_dir.mkdir()
-    
-    # Create CA and server/client directories
-    (config_dir / "CA").mkdir(exist_ok=True)
-    (config_dir / "server").mkdir(exist_ok=True)
-    (config_dir / "clients").mkdir(exist_ok=True)
-    
-    yield cert_dir
+# 32 bytes, the minimum PyJWT accepts without warning for HS256.
+PROXY_KEY = "proxy-only-secret-32-bytes-long!"
 
-@pytest.fixture
-def server_cert(cert_dir: Path) -> Path:
-    """Create a server certificate."""
-    from certified import Certified, person_name, SAN
-    from certified.encode import person_name as pn
-    
-    # Create server identity
-    cert = Certified.new(
-        name=pn("test-server"),
-        san=SAN(hosts=["localhost"]),
-        certified_config=str(cert_dir)
-    )
-    return cert_dir
 
-@pytest.fixture
-def client_cert(cert_dir: Path) -> Path:
-    """Create a client certificate."""
-    from certified import Certified, person_name, SAN
-    from certified.encode import person_name as pn
-    
-    # Create client identity
-    cert = Certified.new(
-        name=pn("test-user"),
-        san=SAN(hosts=["localhost"]),
-        certified_config=str(cert_dir)
-    )
-    return cert_dir
+def bearer(claims: dict[str, Any]) -> str:
+    """A JWT carrying claims, signed with a key the app never sees."""
+    return "Bearer " + jwt.encode(claims, PROXY_KEY, algorithm="HS256")
 
-@pytest.fixture
-def test_config_dict(temp_dir: Path, trusted_proxy: str | None = None) -> dict:
-    """Return config dictionary without writing to file."""
-    config_data = {
-        "psik": {
-            "prefix": str(temp_dir / "psik"),
-        },
-        "callback_url": "https://localhost:8443/v1/callback",
-        "trusted_proxy": trusted_proxy,
-        "forwarder": {
-            "ip": "127.0.0.1",
-            "jobspec": {"script": "echo forwarder"},
-        },
-        "lclstreamer": {
-            "jobspec": {"script": "echo lclstreamer"},
-        },
+
+# --- Choosing a backend -----------------------------------------------------
+
+
+def auth_from(config: Config, auth: AuthBlock) -> AuthBackend:
+    """The backend Config builds from an `auth` block."""
+    return Config.model_validate({**config.model_dump(), "auth": auth}).auth
+
+
+@pytest.mark.parametrize(
+    ("auth", "headers", "expected"),
+    [
+        ({"type": "anonymous", "username": "alice"}, {}, "alice"),
+        ({"type": "trusted_headers"}, {"X-Auth-Request-User": "alice"}, "alice"),
+        ({"type": "forwarded_jwt"}, {"Authorization": bearer({"email": "a@x"})}, "a@x"),
+        ({"type": "mtls"}, {"X-Auth-Request-User": "alice"}, None),
+        (
+            {"type": "chain", "backends": [{"type": "trusted_headers"}]},
+            {"X-Auth-Request-User": "alice"},
+            "alice",
+        ),
+    ],
+)
+def test_config_picks_backend(
+    config: Config, auth: AuthBlock, headers: dict[str, str], expected: str | None
+) -> None:
+    assert user_of(auth_from(config, auth), headers=headers) == expected
+
+
+def test_config_requires_auth(config: Config) -> None:
+    data = config.model_dump()
+    del data["auth"]
+    with pytest.raises(ValidationError, match="auth"):
+        Config.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        {"type": "nope"},
+        {"type": "trusted_headers", "user_hedaer": "X"},
+    ],
+)
+def test_config_rejects_bad_auth(config: Config, auth: AuthBlock) -> None:
+    with pytest.raises(ValidationError):
+        auth_from(config, auth)
+
+
+def test_anonymous_app(client: TestClient) -> None:
+    response = client.get("/transfers")
+    assert response.status_code == 200
+
+
+def test_config_selects_backend(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.auth = TrustedHeaders()
+    path = tmp_path / "lclstream_api.json"
+    path.write_text(config.model_dump_json())
+    monkeypatch.setenv("LCLSTREAM_API_CONFIG", str(path))
+
+    with TestClient(main_app, base_url="http://testserver/v1") as client:
+        assert client.get("/transfers").status_code == 401
+        response = client.get("/transfers", headers={"X-Auth-Request-User": "alice"})
+        assert response.status_code == 200
+
+
+# --- Anonymous --------------------------------------------------------------
+
+
+def test_anonymous() -> None:
+    assert user_of(Anonymous()) == "none"
+    assert user_of(Anonymous(username="alice")) == "alice"
+
+
+# --- TrustedHeaders ---------------------------------------------------------
+
+
+def test_headers_give_user() -> None:
+    headers = {"X-Auth-Request-User": "jdoe"}
+    assert user_of(TrustedHeaders(), headers=headers) == "jdoe"
+
+
+def test_headers_need_user() -> None:
+    assert user_of(TrustedHeaders()) is None
+    assert user_of(TrustedHeaders(), headers={"X-Auth-Request-User": ""}) is None
+
+
+def test_custom_user_header() -> None:
+    backend = TrustedHeaders(user_header="X-Remote-User")
+    assert user_of(backend, headers={"X-Remote-User": "alice"}) == "alice"
+    assert user_of(backend, headers={"X-Auth-Request-User": "alice"}) is None
+
+
+# --- ForwardedJWT -----------------------------------------------------------
+
+
+def test_jwt_gives_email() -> None:
+    headers = {"Authorization": bearer({"email": "alice@example.com"})}
+    assert user_of(ForwardedJWT(), headers=headers) == "alice@example.com"
+
+
+def test_jwt_claims_in_order() -> None:
+    claims = {"email": "", "preferred_username": "alice"}
+    headers = {"Authorization": bearer(claims)}
+    assert user_of(ForwardedJWT(), headers=headers) == "alice"
+
+
+@pytest.mark.parametrize(
+    "authorization", [None, "Basic abc", "Bearer not-a-jwt", "Bearer a.%%%.c"]
+)
+def test_jwt_unusable_is_none(authorization: str | None) -> None:
+    headers = {"Authorization": authorization} if authorization else {}
+    assert user_of(ForwardedJWT(), headers=headers) is None
+
+
+# --- MTLS -------------------------------------------------------------------
+
+
+def test_mtls_without_cert() -> None:
+    # No client cert: certified only knows the address, which proves nothing.
+    headers = {"X-Auth-Request-User": "test-user@example.com"}
+    assert user_of(MTLS(), headers=headers) is None
+
+
+def test_mtls_needs_certified(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("lclstream_api.auth.mtls.get_clientname", None)
+    with pytest.raises(ValidationError, match="needs the certified package"):
+        auth_from(config, {"type": "mtls"})
+
+
+# --- AuthChain --------------------------------------------------------------
+
+OAUTH2_PROXY_OR_MTLS = AuthChain(backends=[TrustedHeaders(), ForwardedJWT(), MTLS()])
+
+
+def test_chain_first_match_wins() -> None:
+    headers = {
+        "X-Auth-Request-User": "alice",
+        "Authorization": bearer({"email": "bob@example.com"}),
     }
-    return config_data
+    assert user_of(OAUTH2_PROXY_OR_MTLS, headers=headers) == "alice"
 
-def test_config_caching_simple(temp_dir: Path):
-    """Test that config caching works correctly for trusted_proxy setting."""
-    from lclstream_api.config import load_config as lc
-    
-    # Save and restore original env
-    original_env = os.environ.get("LCLSTREAM_API_CONFIG")
-    
-    try:
-        # Test 1: trusted_proxy = None
-        config_data = {
-            "psik": {"prefix": str(temp_dir / "psik")},
-            "callback_url": "https://localhost:8443/v1/callback",
-            "trusted_proxy": None,
-            "forwarder": {"ip": "127.0.0.1", "jobspec": {"script": "echo forwarder"}},
-            "lclstreamer": {"jobspec": {"script": "echo lclstreamer"}},
-        }
-        config_path = temp_dir / "test.yaml"
-        config_path.write_text(yaml.dump(config_data))
-        os.environ["LCLSTREAM_API_CONFIG"] = str(config_path)
-        
-        config1 = lc()
-        assert config1.trusted_proxy is None
-        
-        # Test 2: trusted_proxy = "127.0.0.1"
-        config_data["trusted_proxy"] = "127.0.0.1"
-        config_path.write_text(yaml.dump(config_data))
-        
-        config2 = lc()
-        assert config2.trusted_proxy == "127.0.0.1"
-        
-        # Test 3: Change back to None
-        config_data["trusted_proxy"] = None
-        config_path.write_text(yaml.dump(config_data))
-        
-        config3 = lc()
-        assert config3.trusted_proxy is None
-    finally:
-        # Restore original environment
-        if original_env is not None:
-            os.environ["LCLSTREAM_API_CONFIG"] = original_env
-        elif "LCLSTREAM_API_CONFIG" in os.environ:
-            del os.environ["LCLSTREAM_API_CONFIG"]
 
-@pytest.fixture
-def client(test_config_dict: dict) -> Generator[StarletteTestClient, None, None]:
-    """Create a test client with the given configuration."""
-    # Override the config loading for testing
-    from unittest.mock import patch
-    
-    with patch('lclstream_api.config.load_config', return_value=Config.model_validate(test_config_dict)):
-        # Create a test client
-        with StarletteTestClient(
-            app=main_app,
-            base_url="https://testserver",
-            verify=False,  # Disable SSL verification for tests
-        ) as client:
-            yield client
-
-async def test_health_endpoint(client: StarletteTestClient):
-    """Test that health endpoint is publicly accessible."""
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "healthy"}
-
-async def test_mtls_only_auth(client: StarletteTestClient):
-    """Test that mTLS authentication works when trusted_proxy is not set."""
-    # Without client certificate, request should be rejected
-    response = client.post("/transfers", json={})
-    assert response.status_code in [401, 400, 500]
-
-async def test_proxy_auth(client: StarletteTestClient):
-    """Test that proxy authentication works with X-Auth-Request-User header."""
-    # Without header - should fail
-    response = client.post("/transfers", json={})
-    assert response.status_code in [401, 400, 500]
-    
-    # With valid header - should succeed
-    response = client.post("/transfers", json={}, headers={"X-Auth-Request-User": "test-user@example.com"})
-    assert response.status_code == 200
-    assert response.json()["user"] == "test-user@example.com"
-
-async def test_hybrid_mode(client: StarletteTestClient):
-    """Test hybrid mode: proxy for /transfers, mTLS for /callback."""
-    # /transfers with proxy header should work
-    response = client.post("/transfers", json={}, headers={"X-Auth-Request-User": "test-user@example.com"})
-    assert response.status_code == 200
-    assert response.json()["user"] == "test-user@example.com"
-    
-    # /callback without mTLS should fail
-    response = client.post("/callback", json={})
-    assert response.status_code in [401, 400, 500]
-
-async def test_mtls_required_for_callback(client: StarletteTestClient):
-    """Test that /callback always requires mTLS, even when trusted_proxy is set."""
-    response = client.post("/callback", json={})
-    assert response.status_code in [401, 400, 500]
-
-async def test_proxy_header_missing(client: StarletteTestClient):
-    """Test that missing proxy header fails when trusted_proxy is set."""
-    response = client.post("/transfers", json={})
-    assert response.status_code in [401, 400, 500]
-
-async def test_auth_header_parsing(client: StarletteTestClient):
-    """Test that the auth header is correctly parsed from the request."""
-    # Test with different header formats
-    response = client.post("/transfers", json={}, headers={"X-Auth-Request-User": "user123"})
-    assert response.status_code == 200
-    assert response.json()["user"] == "user123"
-    
-    # Test with empty header
-    response = client.post("/transfers", json={}, headers={"X-Auth-Request-User": ""})
-    assert response.status_code in [401, 400, 500]
-
-async def test_multiple_auth_methods(client: StarletteTestClient):
-    """Test that different auth methods work as expected."""
-    # Proxy mode (trusted_proxy set)
-    response = client.post("/transfers", json={}, headers={"X-Auth-Request-User": "proxy_user"})
-    assert response.status_code == 200
-
-# Additional test: Test that config changes are detected
-def test_config_reload(temp_dir: Path):
-    """Test that config reload works correctly."""
-    config_path = temp_dir / "lclstream_api.yaml"
-    config_data = {
-        "psik": {"prefix": str(temp_dir / "psik")},
-        "callback_url": "https://localhost:8443/v1/callback",
-        "trusted_proxy": "127.0.0.1",
-        "forwarder": {"ip": "127.0.0.1", "jobspec": {"script": "echo forwarder"}},
-        "lclstreamer": {"jobspec": {"script": "echo lclstreamer"}},
-    }
-    config_path.write_text(yaml.dump(config_data))
-    os.environ["LCLSTREAM_API_CONFIG"] = str(config_path)
-    
-    # Load initial config
-    config1 = load_config()
-    assert config1.trusted_proxy == "127.0.0.1"
-    
-    # Change config file
-    config_data["trusted_proxy"] = None
-    config_path.write_text(yaml.dump(config_data))
-    
-    # Since load_config is cached, we need to clear cache to see changes
-    # In real application, you'd have a way to reload config
-    # For now, we'll just document this limitation
+def test_chain_falls_through() -> None:
+    headers = {"Authorization": bearer({"email": "bob@example.com"})}
+    assert user_of(OAUTH2_PROXY_OR_MTLS, headers=headers) == "bob@example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +213,8 @@ def test_config_reload(temp_dir: Path):
 #
 # 2396ece tested ownership via the v2 SQLAlchemy/DBOS service layer.  Here we
 # test the same invariants at the router level, registering controlled PortDB
-# and XferDB state in the app's svcs registry and overriding CurrentUser,
-# without touching certificates.
+# and XferDB state in the app's svcs registry and swapping in an Anonymous
+# backend for each user, without touching certificates.
 # ---------------------------------------------------------------------------
 
 class _MockPortDB:
@@ -319,7 +261,7 @@ def _mock_transfer() -> SimpleNamespace:
 
 
 @pytest.fixture
-def transfer_client(setup_lclstream_api):
+def transfer_client(setup_lclstream_api: Path) -> Iterator[AsUser]:
     """Yield a factory that returns a TestClient authenticated as a given user.
 
     Two transfers exist: alice owns eid=1, bob owns eid=2.
@@ -338,12 +280,10 @@ def transfer_client(setup_lclstream_api):
         )
 
         def _as(user: str) -> TestClient:
-            api.dependency_overrides[_CurrentUserDep] = lambda: user
+            registry.register_value(AuthBackend, Anonymous(username=user))
             return client
 
         yield _as
-
-    api.dependency_overrides.pop(_CurrentUserDep, None)
 
 
 def test_non_owner_get_transfer_is_403(transfer_client):

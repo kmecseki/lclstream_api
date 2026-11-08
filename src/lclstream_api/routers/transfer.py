@@ -9,7 +9,7 @@ from fastapi import (
 from lclstreamer.models.parameters import Parameters
 from svcs.fastapi import DepContainer
 
-from ..auth_proxy import CurrentUser, CallbackUser
+from ..auth.current_user import CurrentUser
 from ..config import Config
 from ..models import (
     ClientName,
