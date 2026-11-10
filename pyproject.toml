@@ -35,6 +35,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "lclstream @ git+https://github.com/lclstream/lclstream.git",
     "mpi4py>=4.1.2",
     "pyzmq>=26.0.0",
     "mypy>=2.1.0",
