@@ -6,6 +6,8 @@ import psik
 import yaml
 from pydantic import BaseModel
 
+from .auth import AuthConfig
+
 
 class LCLStreamerConfig(BaseModel):
     jobspec: psik.JobSpec
@@ -30,6 +32,8 @@ class Config(BaseModel):
     forwarder: ForwarderConfig
     replay: ReplayConfig = ReplayConfig()
     lclstreamer: LCLStreamerConfig
+
+    auth: AuthConfig  # no default: every deployment picks a backend
 
 
 # Other config options we could add...

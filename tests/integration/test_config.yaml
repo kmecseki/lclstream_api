@@ -8,6 +8,9 @@ psik:
 
 callback_url: "http://127.0.0.1:8000/v1/callback"
 
+auth:
+  type: anonymous # fixed user for dev
+
 forwarder:
   ip: "127.0.0.1"
   start_port: 42001

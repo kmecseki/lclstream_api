@@ -17,6 +17,10 @@ psik:
   prefix: "%(base)s/psik"
 
 callback_url: null
+
+auth:
+  type: anonymous
+
 forwarder:
   ip: "127.0.0.1"
   start_port: 11401
@@ -58,10 +62,12 @@ def config(tmpdir) -> Config:
 
 
 @pytest.fixture
-def setup_lclstream_api(config, tmp_path) -> Path:
+def setup_lclstream_api(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
     fname = tmp_path / "lclstream_api.json"
     fname.write_text(config.model_dump_json())
-    os.environ["LCLSTREAM_API_CONFIG"] = str(fname)
+    monkeypatch.setenv("LCLSTREAM_API_CONFIG", str(fname))
     return fname
 
 
